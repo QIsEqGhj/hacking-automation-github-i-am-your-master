@@ -46,6 +46,39 @@ def create_report():
              "**Scope:** only project-related and explicitly authorized targets. External inputs accept a single host, IP or URL.", "",
              "**Privacy:** a GitHub egress IP does not guarantee anonymity.", ""]
 
+    runtime_path = OUT / "tool-execution.json"
+    runtime = {}
+    if runtime_path.exists():
+        try:
+            runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+    if runtime:
+        exit_code = runtime.get("exit_code")
+        lines += ["## Execution diagnostics", "",
+                  f"**Tool process exit code:** `{escape(exit_code)}`",
+                  f"**Tool duration (excluding startup):** `{escape(runtime.get('elapsed_seconds', '?'))}` seconds", ""]
+        if exit_code != 0:
+            lines += ["**Execution failure:** the tool exited with an error. Check `tool.log` and the workflow logs. A missing finding is not a negative scan result.", ""]
+    else:
+        lines += ["**Execution did not reach the completion-recording step.** Check workflow logs for earlier failures.", ""]
+    preflight_path = OUT / "preflight.json"
+    if preflight_path.exists():
+        try:
+            preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+            dns = preflight.get("dns", {})
+            http = preflight.get("http_preflight", {})
+            lines += [f"**Resolved IPs:** `{escape(', '.join(dns.get('addresses') or []) or 'none')}`"]
+            if dns.get("error"):
+                lines += [f"**DNS warning:** {escape(dns['error'])}"]
+            if http.get("attempted"):
+                lines += [f"**HTTP HEAD preflight status:** `{escape(http.get('status') or 'not available')}`"]
+                if http.get("error"):
+                    lines += [f"**Preflight warning:** {escape(http['error'])}"]
+            lines += ["", "Preflight data is diagnostic only; it is not a scanner finding.", ""]
+        except (OSError, ValueError):
+            pass
+
     if TOOL == "nmap":
         xml_path = OUT / "nmap.xml"
         if xml_path.exists():
@@ -58,6 +91,10 @@ def create_report():
                     data.append((port.get("portid", "?"), port.get("protocol", "?"),
                                  state.get("state", "?") if state is not None else "?",
                                  service.get("name", "unknown") if service is not None else "unknown"))
+                if not data:
+                    lines += ["**No port entries in Nmap XML.** Check `nmap.txt`, `tool.log`, the selected port list and external firewall rules.", ""]
+                elif not any(row[2] == "open" for row in data):
+                    lines += ["**No open ports among the selected ports.** A firewall or a different application port may explain this. This is not a full host scan.", ""]
                 lines += [f"**Ports in XML output:** {len(data)}", "",
                           "| Port | Protocol | State | Service |", "|---|---|---|---|"]
                 lines += [f"| {escape(a)} | {escape(b)} | {escape(c)} | {escape(d)} |" for a, b, c, d in data]
@@ -71,8 +108,10 @@ def create_report():
         lines += [f"**Discovered subdomains:** {len(hosts)}", "",
                   "Results depend on available passive sources; zero findings does not prove none exist.", ""]
         lines += [f"- `{escape(host)}`" for host in hosts[:40]]
-        if errors and not hosts:
-            lines += ["", "Non-JSON output was recorded; check `subfinder.jsonl`."]
+        if not hosts:
+            lines += ["No subdomains returned by the consulted passive sources. This does not mean the domain has none; examine `tool.log` for source or network errors."]
+        if errors:
+            lines += ["", "Non-JSON content was found in the machine-readable file; check tool logs and possible format changes."]
     elif TOOL == "httpx":
         data, _ = load_jsonl("httpx.jsonl")
         lines += [f"**HTTP responses:** {len(data)}", "",
@@ -80,6 +119,8 @@ def create_report():
         for item in data:
             lines.append(f"| {escape(item.get('url', '-'))} | {escape(item.get('status_code', '-'))} | "
                          f"{escape(item.get('title', '-'))} | {escape(item.get('webserver', '-'))} |")
+        if not data:
+            lines += ["", "No HTTP response was recorded. Confirm URL, scheme, DNS resolution, TLS, connectivity, and `tool.log`. This does not prove the site is down."]
     elif TOOL == "nuclei":
         data, _ = load_jsonl("nuclei.jsonl")
         lines += [f"**Informational template matches:** {len(data)}", "",
@@ -89,12 +130,14 @@ def create_report():
             severity = info.get("severity", "info") if isinstance(info, dict) else "info"
             lines.append(f"| {escape(item.get('template-id', '-'))} | {escape(severity)} | "
                          f"{escape(item.get('matched-at', item.get('host', '-')))} |")
-        lines += ["", "Templates perform informational checks; matches alone do not prove exploitable vulnerabilities. No exploitation is performed."]
+        if not data:
+            lines += ["", "No Nuclei template matched. This is not proof of a secure target. Review `tool.log`, preflight diagnostics, and template match conditions."]
+        lines += ["", "Only the supplied informational templates are executed; matches alone do not prove exploitable vulnerabilities. No exploitation is performed."]
     else:
         lines += ["Unknown tool."]
 
     lines += ["", "## Run files", "",
-              "Download complete outputs from the **Artifacts** section of this workflow run.",
+              "Download `tool.log`, `tool-execution.json`, `preflight.json` and the tool's native output from the **Artifacts** section.",
               "Do not publish third-party host data or secrets in a public repository.", ""]
     return "\n".join(lines)
 
