@@ -1,0 +1,21 @@
+id: offensive-lab-security-txt-present
+info:
+  name: Security contact file present
+  author: workshop
+  severity: info
+  description: Checks whether the well-known security contact file contains a Contact
+    directive. Presence is not a vulnerability.
+  tags: lab,recon,configuration
+http:
+- method: GET
+  path:
+  - '{{BaseURL}}/.well-known/security.txt'
+  matchers-condition: and
+  matchers:
+  - type: status
+    status:
+    - 200
+  - type: word
+    part: body
+    words:
+    - 'Contact:'
