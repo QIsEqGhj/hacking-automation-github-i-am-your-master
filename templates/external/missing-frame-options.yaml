@@ -1,0 +1,23 @@
+id: offensive-lab-missing-frame-options
+info:
+  name: Missing x-frame-options HTTP response header (contextual)
+  author: workshop
+  severity: info
+  description: Reports absence of a security-related response header on an HTTP 200
+    response. May be expected for some responses; not proof of exploitability.
+  tags: lab,recon,configuration
+http:
+- method: GET
+  path:
+  - '{{BaseURL}}'
+  matchers-condition: and
+  matchers:
+  - type: status
+    status:
+    - 200
+  - type: word
+    part: header
+    words:
+    - 'x-frame-options:'
+    case-insensitive: true
+    negative: true
