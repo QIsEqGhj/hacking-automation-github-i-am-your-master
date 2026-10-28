@@ -1,0 +1,27 @@
+id: offensive-lab-external-https-response
+info:
+  name: HTTPS response observed (informational evidence, not a vulnerability)
+  author: workshop
+  severity: info
+  description: |
+    Makes a single GET request to the explicitly authorized HTTPS target.
+    A matched response shows reachability, not a security weakness.
+  tags: lab,connectivity,educational
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 201
+          - 202
+          - 204
+          - 301
+          - 302
+          - 307
+          - 308
+          - 401
+          - 403
+          - 404
