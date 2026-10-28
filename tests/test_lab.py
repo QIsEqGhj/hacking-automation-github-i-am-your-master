@@ -39,25 +39,69 @@ class TestLab(unittest.TestCase):
         self.assertTrue(data["LAB_DEBUG_ONLY"])
         self.assertNotIn("token", data)
 
-    def test_target_allowlist_blocks_arbitrary_external_target(self):
-        repo = Path(__file__).resolve().parents[1]
-        with TemporaryDirectory() as tmp:
-            env = os.environ | {"TOOL": "nmap", "LAB_TARGET": "alvo-arbitrario", "RESULT_DIR": tmp}
-            proc = subprocess.run(["bash", str(repo / "scripts" / "run_lab.sh")],
-                                  cwd=repo, env=env, capture_output=True, text=True)
-            self.assertEqual(proc.returncode, 2)
-            self.assertIn("Lab target not allowed", proc.stderr)
+    def test_external_target_hostname_ip_and_url(self):
+        from scripts.normalize_target import normalize
+        self.assertEqual(normalize("nmap", "198.51.100.25", "80,443")["host"], "198.51.100.25")
+        self.assertEqual(normalize("httpx", "https://lab.example.org:8443/path", "80,443")["url"],
+                         "https://lab.example.org:8443/path")
+        self.assertEqual(normalize("subfinder", "lab.example.org", "80,443")["domain"], "lab.example.org")
+        self.assertTrue(normalize("nmap", "2001:db8::1", "443")["ipv6"])
 
-    def test_subfinder_requires_matching_authorized_domain(self):
+    def test_external_target_blocks_ranges_and_unsafe_input(self):
+        from scripts.normalize_target import normalize
+        for tool, target, ports in [
+            ("nmap", "192.0.2.0/24", "80"),
+            ("nmap", "example.org; echo bad", "80"),
+            ("nmap", "example.org", "1-65535"),
+            ("nmap", "example.org", ",".join(map(str, range(1, 12)))),
+            ("subfinder", "https://example.org", "80"),
+            ("nuclei", "http://example.org", "80"),
+            ("httpx", "https://example.org/?key=secret", "80"),
+        ]:
+            with self.subTest(target=target):
+                with self.assertRaises(ValueError):
+                    normalize(tool, target, ports)
+
+    def test_external_missing_target_exits_before_network(self):
         repo = Path(__file__).resolve().parents[1]
         with TemporaryDirectory() as tmp:
-            env = os.environ | {"TOOL": "subfinder", "LAB_TARGET": "miniapp",
-                                "LAB_ALLOWED_DOMAIN": "meu-lab.example", "DOMAIN": "outro.example",
-                                "RESULT_DIR": tmp}
+            env = os.environ | {"TOOL": "nmap", "TARGET_MODE": "external",
+                                "TARGET_DOMAIN": "", "TARGET_IP": "", "TARGET_URL": "", "RESULT_DIR": tmp}
             proc = subprocess.run(["bash", str(repo / "scripts" / "run_lab.sh")],
                                   cwd=repo, env=env, capture_output=True, text=True)
             self.assertEqual(proc.returncode, 2)
-            self.assertIn("Out-of-scope domain", proc.stderr)
+            self.assertIn("requires exactly one", proc.stderr)
+
+    def test_external_rejects_multiple_target_fields(self):
+        repo = Path(__file__).resolve().parents[1]
+        with TemporaryDirectory() as tmp:
+            env = os.environ | {"TOOL": "nmap", "TARGET_MODE": "external",
+                                "TARGET_DOMAIN": "example.org", "TARGET_IP": "198.51.100.25",
+                                "TARGET_URL": "", "RESULT_DIR": tmp}
+            proc = subprocess.run(["bash", str(repo / "scripts" / "run_lab.sh")],
+                                  cwd=repo, env=env, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("requires exactly one", proc.stderr)
+
+    def test_external_rejects_wrong_target_field_for_tool(self):
+        repo = Path(__file__).resolve().parents[1]
+        with TemporaryDirectory() as tmp:
+            env = os.environ | {"TOOL": "subfinder", "TARGET_MODE": "external",
+                                "TARGET_DOMAIN": "", "TARGET_IP": "198.51.100.25",
+                                "TARGET_URL": "", "RESULT_DIR": tmp}
+            proc = subprocess.run(["bash", str(repo / "scripts" / "run_lab.sh")],
+                                  cwd=repo, env=env, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("does not accept", proc.stderr)
+
+    def test_subfinder_requires_external_mode(self):
+        repo = Path(__file__).resolve().parents[1]
+        with TemporaryDirectory() as tmp:
+            env = os.environ | {"TOOL": "subfinder", "TARGET_MODE": "local", "RESULT_DIR": tmp}
+            proc = subprocess.run(["bash", str(repo / "scripts" / "run_lab.sh")],
+                                  cwd=repo, env=env, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("Subfinder needs target_mode=external", proc.stderr)
 
     def test_nmap_summary(self):
         from scripts import build_report
