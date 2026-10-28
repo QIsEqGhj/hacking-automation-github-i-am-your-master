@@ -1,0 +1,83 @@
+name: "Hacking Automation | Github I am your master"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tool:
+        description: 'Choose one security tool to run'
+        type: choice
+        required: true
+        default: nmap
+        options:
+          - nmap
+          - subfinder
+          - httpx
+          - nuclei
+      lab_target:
+        description: 'Local demo target (Nmap, HTTPx, Nuclei)'
+        type: choice
+        required: true
+        default: miniapp
+        options:
+          - miniapp
+          - juice-shop
+      scan_profile:
+        description: 'Choose the demo execution profile'
+        type: choice
+        required: true
+        default: quick
+        options:
+          - quick
+          - detailed
+      domain:
+        description: 'Subfinder only: project domain (must match LAB_ALLOWED_DOMAIN)'
+        type: string
+        required: false
+      authorization_confirmed:
+        description: 'I confirm that all targets are part of my authorized lab or project'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offensive-lab-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  run_security_tool:
+    name: 'Run ${{ inputs.tool }} (controlled scope)'
+    if: ${{ inputs.authorization_confirmed == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TOOL: ${{ inputs.tool }}
+      PROFILE: ${{ inputs.scan_profile }}
+      LAB_TARGET: ${{ inputs.lab_target }}
+      DOMAIN: ${{ inputs.domain }}
+      LAB_ALLOWED_DOMAIN: ${{ vars.LAB_ALLOWED_DOMAIN }}
+      RESULT_DIR: ${{ github.workspace }}/results
+    steps:
+      - name: 'Check out repository'
+        uses: actions/checkout@v4
+
+      - name: 'Run security tool against authorized target'
+        shell: bash
+        run: bash scripts/run_lab.sh
+
+      - name: 'Generate report and job summary'
+        if: always()
+        shell: bash
+        run: python3 scripts/build_report.py
+
+      - name: 'Upload scan results as artifacts'
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hacking-automation-${{ inputs.tool }}-${{ github.run_number }}
+          path: results/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6
