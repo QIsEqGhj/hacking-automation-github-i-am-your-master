@@ -24,6 +24,13 @@ class LabHandler(BaseHTTPRequestHandler):
         else:
             self._respond(404, "text/plain", b"Not Found")
 
+    def do_HEAD(self):
+        # A lightweight connectivity preflight should not be confused with an error.
+        if self.path in ('/', '/health', '/debug'):
+            self._respond(200, 'text/plain', b'')
+        else:
+            self._respond(404, 'text/plain', b'')
+
     def _respond(self, status, mime, payload):
         self.send_response(status)
         self.send_header("Content-Type", mime)
