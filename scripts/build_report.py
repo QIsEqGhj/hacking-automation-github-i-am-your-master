@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 OUT = Path(os.environ.get("RESULT_DIR", "results"))
 TOOL = os.environ.get("TOOL", "nmap")
 LAB = os.environ.get("LAB_TARGET", "miniapp")
+MODE = os.environ.get("TARGET_MODE", "local")
 
 
 def load_jsonl(filename):
@@ -34,9 +35,15 @@ def escape(value):
 
 def create_report():
     OUT.mkdir(parents=True, exist_ok=True)
-    lines = ["# Results — Hacking Automation: GitHub in Your Master", "",
-             f"**Tool:** `{escape(TOOL)}`", f"**Local lab target:** `{escape(LAB)}`", "",
-             "**Scope:** the miniapp or Juice Shop hosted on this runner, except Subfinder (authorized project domain).", "",
+    try:
+        target_data = json.loads((OUT / "target.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        target_data = {}
+    target_description = target_data.get("url") or target_data.get("host") or (LAB if MODE == "local" else "not validated")
+    lines = ["# Results — Hacking Automation: GitHub I Am Your Master", "",
+             f"**Tool:** `{escape(TOOL)}`", f"**Mode:** `{escape(MODE)}`",
+             f"**Target:** `{escape(target_description)}`", "",
+             "**Scope:** only project-related and explicitly authorized targets. External inputs accept a single host, IP or URL.", "",
              "**Privacy:** a GitHub egress IP does not guarantee anonymity.", ""]
 
     if TOOL == "nmap":
@@ -75,14 +82,14 @@ def create_report():
                          f"{escape(item.get('title', '-'))} | {escape(item.get('webserver', '-'))} |")
     elif TOOL == "nuclei":
         data, _ = load_jsonl("nuclei.jsonl")
-        lines += [f"**Educational template matches:** {len(data)}", "",
+        lines += [f"**Informational template matches:** {len(data)}", "",
                   "| Template | Severity | Target |", "|---|---|---|"]
         for item in data:
             info = item.get("info", {})
             severity = info.get("severity", "info") if isinstance(info, dict) else "info"
             lines.append(f"| {escape(item.get('template-id', '-'))} | {escape(severity)} | "
                          f"{escape(item.get('matched-at', item.get('host', '-')))} |")
-        lines += ["", "The templates are educational. `/debug` is intentional in the miniapp; the Juice Shop template only fingerprints the app. No exploitation is performed."]
+        lines += ["", "Templates perform informational checks; matches alone do not prove exploitable vulnerabilities. No exploitation is performed."]
     else:
         lines += ["Unknown tool."]
 
