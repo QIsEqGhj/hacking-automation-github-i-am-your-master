@@ -1,0 +1,26 @@
+id: offensive-lab-response-observed
+info:
+  name: Observed HTTP response
+  author: workshop
+  severity: info
+  description: Reachability evidence for one requested URL. Not a vulnerability.
+  tags: lab,recon,configuration
+http:
+- method: GET
+  path:
+  - '{{BaseURL}}'
+  matchers-condition: and
+  matchers:
+  - type: status
+    status:
+    - 200
+    - 201
+    - 202
+    - 204
+    - 301
+    - 302
+    - 307
+    - 308
+    - 401
+    - 403
+    - 404
