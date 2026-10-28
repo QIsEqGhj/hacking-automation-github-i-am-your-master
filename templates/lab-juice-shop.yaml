@@ -1,0 +1,24 @@
+id: offensive-lab-juice-shop-fingerprint
+
+info:
+  name: OWASP Juice Shop identification in a local training lab
+  author: workshop
+  severity: info
+  description: |
+    Performs lightweight HTTP fingerprinting of the local training app.
+    This match does NOT imply that any vulnerability was exploited.
+  tags: lab,fingerprint,educational
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "OWASP Juice Shop"
