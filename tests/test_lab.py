@@ -132,3 +132,40 @@ class TestLab(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# Additional checks run through a separate class to keep the workshop fixture
+# tests independent of scanner installation.
+class TestDiagnostics(unittest.TestCase):
+    def test_preflight_local_http_server(self):
+        from scripts.preflight import inspect
+        server = ThreadingHTTPServer(('127.0.0.1', 0), LabHandler)
+        worker = Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            data = inspect('127.0.0.1', f'http://127.0.0.1:{server.server_port}', 'httpx')
+            self.assertIn('127.0.0.1', data['dns']['addresses'])
+            self.assertEqual(data['http_preflight']['status'], 200)
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join()
+
+    def test_zero_httpx_results_are_labeled_as_empty(self):
+        from scripts import build_report
+        with TemporaryDirectory() as temp:
+            (Path(temp) / 'httpx.jsonl').write_text('')
+            (Path(temp) / 'tool-execution.json').write_text('{"exit_code":0,"elapsed_seconds":2}')
+            with patch.object(build_report, 'OUT', Path(temp)), patch.object(build_report, 'TOOL', 'httpx'):
+                report = build_report.create_report()
+            self.assertIn('No HTTP response was recorded', report)
+            self.assertIn('Tool process exit code:', report)
+
+    def test_execution_errors_are_distinct_from_empty_findings(self):
+        from scripts import build_report
+        with TemporaryDirectory() as temp:
+            (Path(temp) / 'nuclei.jsonl').write_text('')
+            (Path(temp) / 'tool-execution.json').write_text('{"exit_code":125,"elapsed_seconds":1}')
+            with patch.object(build_report, 'OUT', Path(temp)), patch.object(build_report, 'TOOL', 'nuclei'):
+                report = build_report.create_report()
+            self.assertIn('Execution failure:', report)
+            self.assertIn('No Nuclei template matched', report)
