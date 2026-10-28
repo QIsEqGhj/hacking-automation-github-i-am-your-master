@@ -1,0 +1,21 @@
+id: offensive-lab-git-head-exposed
+info:
+  name: Public Git HEAD metadata detected
+  author: workshop
+  severity: medium
+  description: Checks only the standard Git HEAD metadata marker at one known path.
+    Does not download source code or credentials.
+  tags: lab,recon,configuration
+http:
+- method: GET
+  path:
+  - '{{BaseURL}}/.git/HEAD'
+  matchers-condition: and
+  matchers:
+  - type: status
+    status:
+    - 200
+  - type: word
+    part: body
+    words:
+    - 'ref: refs/heads/'
