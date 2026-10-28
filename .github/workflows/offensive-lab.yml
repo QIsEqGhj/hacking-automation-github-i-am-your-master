@@ -1,10 +1,10 @@
-name: "Hacking Automation | Github I am your master"
+name: 'Hacking Automation | Github I am your master'
 
 on:
   workflow_dispatch:
     inputs:
       tool:
-        description: 'Choose one security tool to run'
+        description: 'Security tool'
         type: choice
         required: true
         default: nmap
@@ -13,28 +13,54 @@ on:
           - subfinder
           - httpx
           - nuclei
+      target_mode:
+        description: 'Local app or externally hosted project target'
+        type: choice
+        required: true
+        default: local
+        options:
+          - local
+          - external
       lab_target:
-        description: 'Local demo target (Nmap, HTTPx, Nuclei)'
+        description: 'Local app (ignored for external targets)'
         type: choice
         required: true
         default: miniapp
         options:
           - miniapp
           - juice-shop
+      target_domain:
+        description: 'External: a single authorized domain or subdomain'
+        type: string
+        required: false
+      target_ip:
+        description: 'External: a single authorized IPv4 or IPv6 address'
+        type: string
+        required: false
+      target_url:
+        description: 'External: a single authorized HTTP(S) URL'
+        type: string
+        required: false
+      ports:
+        description: 'External Nmap: comma-separated TCP ports (max 10)'
+        type: string
+        required: false
+        default: '80,443'
       scan_profile:
-        description: 'Choose the demo execution profile'
+        description: 'Quick or lightweight detailed scan'
         type: choice
         required: true
         default: quick
         options:
           - quick
           - detailed
-      domain:
-        description: 'Subfinder only: project domain (must match LAB_ALLOWED_DOMAIN)'
-        type: string
-        required: false
       authorization_confirmed:
-        description: 'I confirm that all targets are part of my authorized lab or project'
+        description: 'I have explicit permission to test this target'
+        type: boolean
+        required: true
+        default: false
+      project_related_confirmed:
+        description: 'External target testing is related to the software in this repository'
         type: boolean
         required: true
         default: false
@@ -48,22 +74,25 @@ concurrency:
 
 jobs:
   run_security_tool:
-    name: 'Run ${{ inputs.tool }} (controlled scope)'
-    if: ${{ inputs.authorization_confirmed == true }}
+    name: 'Run ${{ inputs.tool }} (${{ inputs.target_mode }})'
+    if: ${{ inputs.authorization_confirmed == true && (inputs.target_mode == 'local' || inputs.project_related_confirmed == true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       TOOL: ${{ inputs.tool }}
-      PROFILE: ${{ inputs.scan_profile }}
+      TARGET_MODE: ${{ inputs.target_mode }}
       LAB_TARGET: ${{ inputs.lab_target }}
-      DOMAIN: ${{ inputs.domain }}
-      LAB_ALLOWED_DOMAIN: ${{ vars.LAB_ALLOWED_DOMAIN }}
+      TARGET_DOMAIN: ${{ inputs.target_domain }}
+      TARGET_IP: ${{ inputs.target_ip }}
+      TARGET_URL: ${{ inputs.target_url }}
+      PORTS: ${{ inputs.ports }}
+      PROFILE: ${{ inputs.scan_profile }}
       RESULT_DIR: ${{ github.workspace }}/results
     steps:
       - name: 'Check out repository'
         uses: actions/checkout@v4
 
-      - name: 'Run security tool against authorized target'
+      - name: 'Validate target and execute security tool'
         shell: bash
         run: bash scripts/run_lab.sh
 
@@ -72,7 +101,7 @@ jobs:
         shell: bash
         run: python3 scripts/build_report.py
 
-      - name: 'Upload scan results as artifacts'
+      - name: 'Upload results as artifacts'
         if: always()
         uses: actions/upload-artifact@v4
         with:
