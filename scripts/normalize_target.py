@@ -70,8 +70,6 @@ def normalize(tool: str, target: str, ports: str) -> dict:
             netloc += ':'+str(port)
         scheme = parsed.scheme or ('http' if version else 'https')
         url = urlunsplit((scheme, netloc, parsed.path or '', '', ''))
-    if tool == 'nuclei' and not url.startswith('https://'):
-        raise ValueError('External Nuclei informational HTTPS-header template requires an https:// URL')
 
     selected_ports = []
     if tool == 'nmap':
