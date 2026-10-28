@@ -45,12 +45,12 @@ on:
         description: 'External Nmap: comma-separated TCP ports (max 10)'
         type: string
         required: false
-        default: '80,443'
+        default: '22,80,443,3000,8080,8443'
       scan_profile:
         description: 'Quick or lightweight detailed scan'
         type: choice
         required: true
-        default: quick
+        default: detailed
         options:
           - quick
           - detailed
@@ -92,11 +92,14 @@ jobs:
       - name: 'Check out repository'
         uses: actions/checkout@v4
 
+      - name: 'Install DNS enrichment dependency'
+        run: python3 -m pip install --disable-pip-version-check dnspython==2.7.0
+
       - name: 'Validate target and execute security tool'
         shell: bash
         run: bash scripts/run_lab.sh
 
-      - name: 'Generate report and job summary'
+      - name: 'Generate interpreted security brief and job summary'
         if: always()
         shell: bash
         run: python3 scripts/build_report.py
