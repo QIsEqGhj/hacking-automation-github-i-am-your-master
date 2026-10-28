@@ -2,14 +2,14 @@
 set -Eeuo pipefail
 
 TOOL="${TOOL:-nmap}"
-PROFILE="${PROFILE:-quick}"
+PROFILE="${PROFILE:-detailed}"
 TARGET_MODE="${TARGET_MODE:-local}"
 LAB_TARGET="${LAB_TARGET:-miniapp}"
 TARGET_DOMAIN="${TARGET_DOMAIN:-}"
 TARGET_IP="${TARGET_IP:-}"
 TARGET_URL_INPUT="${TARGET_URL:-}"
 INPUT_KIND=local
-PORTS="${PORTS:-80,443}"
+PORTS="${PORTS:-22,80,443,3000,8080,8443}"
 OUT="${RESULT_DIR:-$(pwd)/results}"
 mkdir -p "$OUT"
 
@@ -52,7 +52,7 @@ if [[ "$TARGET_MODE" == external ]]; then
   TARGET_PORTS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["ports"])' "$OUT/target.json")
   IPV6=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["ipv6"]).lower())' "$OUT/target.json")
   DESCRIPTION="$TARGET (externally hosted project target)"
-  NUCLEI_TEMPLATE='/templates/external-https-headers.yaml'
+  NUCLEI_TEMPLATE='/templates/external/'
 else
   PORT=8765
   TARGET_URL='http://127.0.0.1:8765'
@@ -70,6 +70,7 @@ else
 ' "$TARGET_URL" "$TARGET_PORTS" > "$OUT/target.json"
 fi
 
+if [[ -z "$HOST" ]]; then echo 'Target validation produced an empty hostname' >&2; exit 2; fi
 cat > "$OUT/execution-context.txt" <<META
 Repository: ${GITHUB_REPOSITORY:-local-run}
 Run ID: ${GITHUB_RUN_ID:-local}
@@ -155,46 +156,63 @@ case "$TOOL" in
       sudo apt-get update -qq && sudo apt-get install -y -qq nmap
     fi
     nmap --version | head -n 2 | tee -a "$OUT/tool.log"
-    args=(-sT -Pn -p "$TARGET_PORTS" --max-retries 2 --host-timeout 90s -v
-          -oX "$OUT/nmap.xml" -oN "$OUT/nmap.txt")
+    args=(-sT -Pn -p "$TARGET_PORTS" --max-retries 2 --host-timeout 180s
+          --script-timeout 15s -oX "$OUT/nmap.xml" -oN "$OUT/nmap.txt")
     if [[ "$IPV6" == true ]]; then args+=(-6); fi
-    if [[ "$PROFILE" == detailed ]]; then args+=(-sV --version-light); fi
-    run_logged timeout 130s nmap "${args[@]}" "$HOST"
+    if [[ "$PROFILE" == detailed ]]; then
+      args+=(-sV --version-light --script 'http-title,http-headers,ssl-cert')
+    fi
+    run_logged timeout 210s nmap "${args[@]}" "$HOST"
     ;;
   subfinder)
-    echo "Passive discovery: $HOST. Empty output can be valid when public sources contain no entries." | tee -a "$OUT/tool.log"
+    # Subfinder is passive. Detailed expands passive sources but never brute-forces.
     minutes=2
-    if [[ "$PROFILE" == detailed ]]; then minutes=3; fi
-    # Mount result directory so JSONL is written by Subfinder itself, not parsed from logs.
-    run_logged timeout 215s docker run --rm -v "$OUT:/results" projectdiscovery/subfinder:latest \
-      -d "$HOST" -oJ -o /results/subfinder.jsonl -v -rl 5 -max-time "$minutes" -duc
+    sources=()
+    if [[ "$PROFILE" == detailed ]]; then
+      minutes=4
+      sources=(-all)
+    fi
+    : > "$OUT/subfinder.jsonl"
+    echo "Passive domain discovery: $HOST | max duration: ${minutes}min" | tee -a "$OUT/tool.log"
+    run_logged timeout 295s docker run --rm -v "$OUT:/results" projectdiscovery/subfinder:latest \
+      -d "$HOST" -oJ -cs -o /results/subfinder.jsonl -rl 5 -max-time "$minutes" -duc "${sources[@]}"
+    # Optional DNS enrichment: no HTTP requests to discovered hosts, only A/AAAA/CNAME.
+    if [[ "$RUN_STATUS" == 0 ]]; then
+      python3 scripts/enrich_subdomains.py --input "$OUT/subfinder.jsonl" \
+        --output "$OUT/subdomains-dns.json" --max-hosts 30 || true
+    fi
     ;;
   httpx)
-    # For domains/IPs allow httpx's normal HTTPS-to-HTTP fallback. For explicit
-    # URLs, preserve the requested protocol. This fixes silent missing results.
     HTTPX_INPUT="$TARGET_URL"
-    args=(-u "$HTTPX_INPUT" -sc -title -server -location -cl -json -rl 3 -timeout 8 -retries 1 -nc)
-    if [[ "$TARGET_MODE" == external && "$INPUT_KIND" != url ]]; then
-      HTTPX_INPUT="$HOST"
-      args=(-u "$HTTPX_INPUT" -sc -title -server -location -cl -json -rl 3 -timeout 8 -retries 1 -nc)
-    else
-      args+=(-nfs)
+    if [[ "$TARGET_MODE" == external && "$INPUT_KIND" != url ]]; then HTTPX_INPUT="$HOST"; fi
+    args=(-u "$HTTPX_INPUT" -sc -title -server -location -cl -ct -rt -ip -cname
+          -td -cdn -tls-grab -j -rl 2 -timeout 10 -retries 1 -nc
+          -o /results/httpx.jsonl)
+    # Avoid leaving the user's selected hostname. Detailed only asks three known paths.
+    if [[ "$PROFILE" == detailed ]]; then
+      url_rest="${TARGET_URL#*://}"
+      if [[ "$TARGET_MODE" == external && "$INPUT_KIND" == url && "$url_rest" == */* && -n "${url_rest#*/}" ]]; then
+        echo 'Specific URL path supplied: skipping additional root paths.' | tee -a "$OUT/tool.log"
+      else
+        args+=(-path '/,/robots.txt,/.well-known/security.txt')
+      fi
     fi
-    if [[ "$PROFILE" == detailed ]]; then args+=(-td); fi
-    args+=(-o /results/httpx.jsonl)
-    run_logged timeout 100s docker run --rm --network host -v "$OUT:/results" \
+    if [[ "$TARGET_MODE" == local || "$INPUT_KIND" == url ]]; then args+=(-nfs); fi
+    run_logged timeout 170s docker run --rm --network host -v "$OUT:/results" \
       projectdiscovery/httpx:latest "${args[@]}"
     ;;
   nuclei)
-    templates=( -t "$NUCLEI_TEMPLATE" )
+    # Explicit local lab templates or a curated, read-only external HTTP template set.
+    args=(-u "$TARGET_URL" -t "$NUCLEI_TEMPLATE" -jsonl -o /results/nuclei.jsonl
+          -nc -duc -rl 2 -c 1 -bs 1 -timeout 10 -retries 1 -dr -stats -si 10)
     if [[ "$TARGET_MODE" == external ]]; then
-      # A positive HTTP response is useful evidence even when no header issue is found.
-      templates+=( -t /templates/external-https-response.yaml )
+      if [[ "$PROFILE" == detailed ]]; then args+=(-t /templates/external-detailed/); fi
     fi
-    run_logged timeout 130s docker run --rm --network host -v "$(pwd)/templates:/templates:ro" -v "$OUT:/results" \
-      projectdiscovery/nuclei:latest -u "$TARGET_URL" "${templates[@]}" \
-      -jsonl -o /results/nuclei.jsonl -nc -duc -or -rl 2 -c 1 -timeout 8
+    run_logged timeout 180s docker run --rm --network host \
+      -v "$(pwd)/templates:/templates:ro" -v "$OUT:/results" \
+      projectdiscovery/nuclei:latest "${args[@]}"
     ;;
+
 esac
 
 export RUN_STATUS RUN_SECONDS
